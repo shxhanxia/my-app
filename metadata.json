@@ -1,0 +1,6 @@
+{
+  "name": "Clinical PDF Data Extractor",
+  "description": "An AI-powered tool to extract clinical data from medical literature PDFs and export to Excel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
