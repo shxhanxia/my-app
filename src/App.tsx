@@ -8,7 +8,6 @@ import {
   XCircle, 
   Loader2, 
   BrainCircuit, 
-  ChevronDown,
   Trash2,
   RefreshCcw,
   Zap
@@ -19,7 +18,7 @@ import { twMerge } from 'tailwind-merge';
 import { extractTextFromPdf } from './lib/pdfWorker';
 import { processBatchOfPdfs, testConnection } from './lib/aiService';
 import { exportToExcel } from './lib/excelHelper';
-import { ClinicalData, ModelConfig, PROVIDERS, ProcessingFile } from './types';
+import { ClinicalData, ModelConfig, ProcessingFile } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -41,7 +40,7 @@ export default function App() {
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     apiKey: '',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3-flash-preview',
   });
   
   const [batchSize, setBatchSize] = useState(10);
@@ -57,7 +56,11 @@ export default function App() {
     const saved = localStorage.getItem('ai_clinical_config');
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
+        let parsed = JSON.parse(saved);
+        if (parsed.model === 'gemini-2.0-flash') {
+          parsed.model = 'gemini-3-flash-preview';
+          localStorage.setItem('ai_clinical_config', JSON.stringify(parsed));
+        }
         setModelConfig(prev => ({ ...prev, ...parsed }));
       } catch (e) {
         console.error("Failed to load settings from localStorage");
@@ -227,36 +230,14 @@ export default function App() {
             >
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-700">模型选择</label>
-                  <div className="relative">
-                    <select
-                      value={modelConfig.model}
-                      onChange={(e) => {
-                        const selectedModelId = e.target.value;
-                        const provider = PROVIDERS.find(p => p.models.some(m => m.id === selectedModelId));
-                        
-                        // Check if current baseUrl is one of the known default URLs or is empty
-                        const isKnownBaseUrl = !modelConfig.baseUrl || PROVIDERS.some(p => p.defaultBaseUrl === modelConfig.baseUrl);
-                        
-                        saveSettings({
-                          ...modelConfig,
-                          model: selectedModelId,
-                          // Only overwrite baseUrl if it was empty or matched a known official url (preserves custom proxies)
-                          baseUrl: provider && isKnownBaseUrl ? provider.defaultBaseUrl : modelConfig.baseUrl
-                        });
-                      }}
-                      className="w-full h-10 px-3 pr-10 rounded-lg border border-slate-200 bg-slate-50 text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    >
-                      {PROVIDERS.map(provider => (
-                        <optgroup key={provider.id} label={provider.name}>
-                          {provider.models.map(m => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                    <ChevronDown size={16} className="absolute right-3 top-3 text-slate-400 pointer-events-none" />
-                  </div>
+                  <label className="text-sm font-semibold text-slate-700">模型名称 (Model ID)</label>
+                  <input
+                    type="text"
+                    value={modelConfig.model}
+                    onChange={(e) => saveSettings({ ...modelConfig, model: e.target.value })}
+                    placeholder="例如: gpt-4o, gemini-2.0-flash, deepseek-chat..."
+                    className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -276,7 +257,7 @@ export default function App() {
                     type="password"
                     value={modelConfig.apiKey}
                     onChange={(e) => saveSettings({ ...modelConfig, apiKey: e.target.value })}
-                    placeholder={modelConfig.model.includes('gemini') ? "使用内置 Key (可选填写)" : "请输入 API Key"}
+                    placeholder="请输入 API Key (可选填写内置默认Key)"
                     className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
                 </div>

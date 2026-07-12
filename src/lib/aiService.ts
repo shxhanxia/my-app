@@ -48,7 +48,7 @@ export async function processBatchOfPdfs(
 ${texts.map((t, i) => `--- 文档 ${i + 1} (文件名: ${t.name}) ---\n${t.content}\n`).join('\n')}
 `;
 
-  if (config.baseUrl.includes('googleapis.com') || config.model.startsWith('gemini')) {
+  if (!config.baseUrl || (config.baseUrl.includes('googleapis.com') && !config.baseUrl.includes('openai'))) {
     return callGemini(prompt, config);
   } else {
     return callOpenAICompatible(prompt, config);
@@ -87,7 +87,8 @@ async function callGemini(prompt: string, config: ModelConfig): Promise<Clinical
 }
 
 async function callOpenAICompatible(prompt: string, config: ModelConfig): Promise<ClinicalData[]> {
-  if (!config.apiKey) throw new Error("Missing API Key for custom endpoint");
+  const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
+  if (!apiKey) throw new Error("Missing API Key for custom endpoint");
   
   const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -126,7 +127,7 @@ async function callOpenAICompatible(prompt: string, config: ModelConfig): Promis
 export async function testConnection(config: ModelConfig): Promise<{ success: boolean; message?: string }> {
   try {
     const testPrompt = "Hello, respond with 'pong' in JSON format: {\"res\": \"pong\"}";
-    if (config.baseUrl.includes('googleapis.com') || config.model.startsWith('gemini')) {
+    if (!config.baseUrl || (config.baseUrl.includes('googleapis.com') && !config.baseUrl.includes('openai'))) {
       const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
       const ai = new GoogleGenAI({ apiKey });
       await ai.models.generateContent({
