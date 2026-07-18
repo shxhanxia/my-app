@@ -20,6 +20,7 @@ import { extractTextFromPdf } from './lib/pdfWorker';
 import { processBatchOfPdfs, testConnection } from './lib/aiService';
 import { exportToExcel } from './lib/excelHelper';
 import { ClinicalData, ModelConfig, ProcessingFile } from './types';
+import logo from './logo.png';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -200,7 +201,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="p-1 rounded-lg">
-              <img src="/logo.png" alt="Logo" className="w-8 h-8 rounded" />
+              <img src={logo} alt="Logo" className="w-8 h-8 rounded" />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Data Mining Tool for Clinical Case Report</h1>
