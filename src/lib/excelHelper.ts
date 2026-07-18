@@ -3,24 +3,25 @@ import { ClinicalData } from '../types';
 
 export function exportToExcel(data: ClinicalData[]) {
   const worksheetData = data.map(item => ({
-    'PDF名': item.pdfName,
-    '性别 (Gender)': item.gender || 'Null',
-    '年龄 (Age)': item.age ?? 'Null',
-    '身高': item.height || 'Null',
-    '体重': item.weight || 'Null',
-    '入院时心率': item.heartRate || 'Null',
-    '入院时收缩压': item.systolicBP || 'Null',
-    '入院时舒张压': item.diastolicBP || 'Null',
-    '合并症': item.comorbidities || 'Null',
-    'PRKAR1A基因突变情况': item.prkar1a || 'Null',
-    '肿瘤位置': item.tumorLocation || 'Null',
-    '肿瘤最大径 (mm)': item.maxDiameterMm ?? 'Null',
-    '症状': item.symptoms || 'Null',
-    '病理类型': item.pathologyType || 'Null',
-    '随访时间 (月)': item.followUpMonths ?? 'Null',
-    '是否复发': item.isRecurrent || 'Null',
-    '作者国家': item.country || 'Null',
-    '肿瘤数量': item.tumorCount ?? 'Null'
+    'Filename': item.pdfName,
+    'Gender': item.gender || 'Null',
+    'Age (years)': item.age ?? 'Null',
+    'Height (cm)': item.height || 'Null',
+    'Weight (kg)': item.weight || 'Null',
+    'Heart rate (bpm)': item.heartRate || 'Null',
+    'SBP (mmHg)': item.systolicBP || 'Null',
+    'DBP (mmHg)': item.diastolicBP || 'Null',
+    'Complication': item.comorbidities || 'Null',
+    'Mutant Gene': item.mutantGene || 'Null',
+    'Tumor Location': item.tumorLocation || 'Null',
+    'The longest diameter of tumor (mm)': item.maxDiameterMm ?? 'Null',
+    'Symptom': item.symptoms || 'Null',
+    'Pathological Type': item.pathologyType || 'Null',
+    'Follow-up period (months)': item.followUpMonths ?? 'Null',
+    'Clinical prognosis': item.isRecurrent || 'Null',
+    'Country': item.country || 'Null',
+    'Number of lumps': item.tumorCount ?? 'Null',
+    'Author': item.author || 'Null'
   }));
 
   const worksheet = XLSX.utils.json_to_sheet(worksheetData);
@@ -32,21 +33,22 @@ export function exportToExcel(data: ClinicalData[]) {
     { wch: 20 }, // name
     { wch: 10 }, // gender
     { wch: 10 }, // age
-    { wch: 10 }, // height
-    { wch: 10 }, // weight
-    { wch: 15 }, // hr
+    { wch: 15 }, // height
+    { wch: 15 }, // weight
+    { wch: 20 }, // hr
     { wch: 15 }, // sbp
     { wch: 15 }, // dbp
     { wch: 20 }, // comorbid
-    { wch: 20 }, // prkar1a
+    { wch: 15 }, // mutantGene
     { wch: 20 }, // loc
-    { wch: 15 }, // dia
+    { wch: 35 }, // dia
     { wch: 20 }, // sym
     { wch: 20 }, // path
-    { wch: 15 }, // follow
-    { wch: 10 }, // recur
+    { wch: 25 }, // follow
+    { wch: 20 }, // recur
     { wch: 15 }, // country
-    { wch: 10 }, // count
+    { wch: 20 }, // count
+    { wch: 15 }, // author
   ];
   worksheet['!cols'] = wscols;
 

@@ -10,7 +10,8 @@ import {
   BrainCircuit, 
   Trash2,
   RefreshCcw,
-  Zap
+  Zap,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -40,7 +41,8 @@ export default function App() {
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     apiKey: '',
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-3.1-pro-preview',
+    isMultimodal: false,
   });
   
   const [batchSize, setBatchSize] = useState(10);
@@ -57,10 +59,6 @@ export default function App() {
     if (saved) {
       try {
         let parsed = JSON.parse(saved);
-        if (parsed.model === 'gemini-2.0-flash') {
-          parsed.model = 'gemini-3-flash-preview';
-          localStorage.setItem('ai_clinical_config', JSON.stringify(parsed));
-        }
         setModelConfig(prev => ({ ...prev, ...parsed }));
       } catch (e) {
         console.error("Failed to load settings from localStorage");
@@ -89,7 +87,7 @@ export default function App() {
   };
 
   const clearAll = () => {
-    if (window.confirm('确定要清除所有文件和结果吗?')) {
+    if (window.confirm('Are you sure you want to clear all files and results?')) {
       setFiles([]);
     }
   };
@@ -108,15 +106,14 @@ export default function App() {
     }, 4000);
   };
 
-  const updateResultField = (fileId: string, field: keyof ClinicalData, value: string | null) => {
+  const updateResultField = (fileId: string, index: number, field: keyof ClinicalData, value: string | null) => {
     setFiles(prev => prev.map(f => {
-      if (f.id === fileId && f.result) {
+      if (f.id === fileId && f.results) {
+        const newResults = [...f.results];
+        newResults[index] = { ...newResults[index], [field]: value };
         return {
           ...f,
-          result: {
-            ...f.result,
-            [field]: value
-          }
+          results: newResults
         };
       }
       return f;
@@ -143,10 +140,18 @@ export default function App() {
       try {
         // Extract text from all PDFs in batch
         const batchTexts = await Promise.all(
-          batch.map(async (pf) => ({
-            name: pf.file.name,
-            content: await extractTextFromPdf(pf.file)
-          }))
+          batch.map(async (pf) => {
+            if (modelConfig.isMultimodal) {
+              return {
+                name: pf.file.name,
+                file: pf.file
+              };
+            }
+            return {
+              name: pf.file.name,
+              content: await extractTextFromPdf(pf.file)
+            };
+          })
         );
 
         // Call AI for the batch
@@ -154,9 +159,11 @@ export default function App() {
 
         // Map results back to files
         setFiles(prev => prev.map(f => {
-          const result = results.find(r => r.pdfName === f.file.name);
-          if (result && batch.find(bf => bf.id === f.id)) {
-            return { ...f, status: 'completed', result };
+          const fileResults = results.filter(r => r.pdfName === f.file.name);
+          if (fileResults.length > 0 && batch.find(bf => bf.id === f.id)) {
+            return { ...f, status: 'completed', results: fileResults };
+          } else if (batch.find(bf => bf.id === f.id)) {
+            return { ...f, status: 'error', error: "No data extracted" };
           }
           return f;
         }));
@@ -176,11 +183,11 @@ export default function App() {
 
   const exportData = () => {
     const dataToExport = files
-      .filter(f => f.status === 'completed' && f.result)
-      .map(f => f.result!);
+      .filter(f => f.status === 'completed' && f.results && f.results.length > 0)
+      .flatMap(f => f.results!);
     
     if (dataToExport.length === 0) {
-      alert("没有可导出的完成结果");
+      alert("No completed results to export");
       return;
     }
     exportToExcel(dataToExport);
@@ -192,11 +199,11 @@ export default function App() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-blue-600 p-2 rounded-lg text-white">
-              <BrainCircuit size={24} />
+            <div className="p-1 rounded-lg">
+              <img src="/logo.png" alt="Logo" className="w-8 h-8 rounded" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight">Clinical PDF Extractor</h1>
+              <h1 className="text-xl font-bold tracking-tight">Data Mining Tool for Clinical Case Report</h1>
               <p className="text-xs text-slate-500 font-medium">Smart Data Intelligence for Clinical Literature</p>
             </div>
           </div>
@@ -230,18 +237,31 @@ export default function App() {
             >
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-700">模型名称 (Model ID)</label>
+                  <label className="text-sm font-semibold text-slate-700">Model ID</label>
                   <input
                     type="text"
                     value={modelConfig.model}
                     onChange={(e) => saveSettings({ ...modelConfig, model: e.target.value })}
-                    placeholder="例如: gpt-4o, gemini-2.0-flash, deepseek-chat..."
+                    placeholder="e.g. gpt-4o, gemini-3.1-pro-preview"
                     className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600 mt-2 cursor-pointer group relative w-fit">
+                    <input 
+                      type="checkbox" 
+                      checked={modelConfig.isMultimodal || false}
+                      onChange={(e) => saveSettings({ ...modelConfig, isMultimodal: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                    />
+                    Enable Multimodal (Read PDF directly)
+                    <HelpCircle size={14} className="text-slate-400" />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-center pointer-events-none">
+                      If enabled, the original PDF file will be sent directly to the model instead of extracting text locally. This requires a model that natively supports multimodal PDF reading (e.g. Gemini 1.5 Pro).
+                    </div>
+                  </label>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-700">API 地址 (OpenAI 兼容)</label>
+                  <label className="text-sm font-semibold text-slate-700">API address</label>
                   <input
                     type="text"
                     value={modelConfig.baseUrl}
@@ -257,13 +277,13 @@ export default function App() {
                     type="password"
                     value={modelConfig.apiKey}
                     onChange={(e) => saveSettings({ ...modelConfig, apiKey: e.target.value })}
-                    placeholder="请输入 API Key (可选填写内置默认Key)"
+                    placeholder="Enter API Key (Optional if using built-in key)"
                     className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-700">批次大小 ({batchSize})</label>
+                  <label className="text-sm font-semibold text-slate-700">Batch size ({batchSize})</label>
                   <input
                     type="range"
                     min="1"
@@ -289,9 +309,9 @@ export default function App() {
                       {testStatus === 'testing' ? <Loader2 className="animate-spin" size={16} /> : 
                        testStatus === 'success' ? <CheckCircle2 size={16} /> :
                        testStatus === 'error' ? <XCircle size={16} /> : <RefreshCcw size={16} />}
-                      {testStatus === 'testing' ? '正在测试...' : 
-                       testStatus === 'success' ? '连接成功' :
-                       testStatus === 'error' ? '连接失败' : '测试模型连接'}
+                      {testStatus === 'testing' ? 'Testing...' : 
+                       testStatus === 'success' ? 'Connection Successful' :
+                       testStatus === 'error' ? 'Connection Failed' : 'Test Model'}
                     </button>
                   </div>
                   {testMessage && (
@@ -341,8 +361,7 @@ export default function App() {
                 <Upload size={32} />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900">点击或拖拽上传 PDF</h3>
-                <p className="text-sm text-slate-500">支持一并上传多个临床文献文件</p>
+                <h3 className="font-bold text-slate-900">Click or drag to upload literature</h3>
               </div>
             </div>
 
@@ -350,7 +369,7 @@ export default function App() {
               <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <span className="text-sm font-bold text-slate-700 flex items-center gap-2">
                   <FileText size={16} className="text-slate-400" />
-                  待处理列表 ({files.length})
+                  Pending processing list ({files.length})
                 </span>
                 <button 
                   onClick={clearAll}
@@ -385,7 +404,7 @@ export default function App() {
                 ))}
                 {files.length === 0 && (
                   <div className="h-full flex items-center justify-center text-slate-400 text-xs italic">
-                    暂未上传解析文件
+                    No files uploaded yet
                   </div>
                 )}
               </div>
@@ -396,7 +415,7 @@ export default function App() {
                   className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-600/20"
                 >
                   {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
-                  {isProcessing ? '正在智能解析中...' : '开始批量解析'}
+                  {isProcessing ? 'Processing...' : 'Run the analysis'}
                 </button>
               </div>
             </div>
@@ -407,8 +426,7 @@ export default function App() {
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-full overflow-hidden min-h-[600px]">
               <div className="p-6 border-b border-slate-100 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">结果汇总看板</h2>
-                  <p className="text-xs text-slate-500">实时展示多维度的臨床数据提煉結果</p>
+                  <h2 className="text-lg font-bold text-slate-900">Results</h2>
                 </div>
                 <button
                   onClick={exportData}
@@ -416,7 +434,7 @@ export default function App() {
                   className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-50 disabled:text-slate-300 text-white rounded-xl text-sm font-bold transition-all"
                 >
                   <Download size={16} />
-                  导出 XLSX 报表
+                  Export results
                 </button>
               </div>
 
@@ -424,125 +442,135 @@ export default function App() {
                 <table className="w-full text-left text-sm border-collapse min-w-max">
                   <thead className="bg-slate-50/80 sticky top-0 backdrop-blur-sm z-10">
                     <tr>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200 sticky left-0 bg-slate-50/95 shadow-[1px_0_0_0_#e2e8f0]">文件名</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">性别</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">年龄</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">身高</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">体重</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">入院时心率</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">入院时收缩压</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">入院时舒张压</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">合并症</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">PRKAR1A基因突变情况</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">肿瘤位置</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">最大径(mm)</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">症状</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">病理类型</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">随访时间(月)</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">是否复发</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">作者国家</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">肿瘤数量</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200 sticky left-0 bg-slate-50/95 shadow-[1px_0_0_0_#e2e8f0]">Filename</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Gender</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Age (years)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Height (cm)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Weight (kg)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Heart rate (bpm)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">SBP (mmHg)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">DBP (mmHg)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Complication</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Mutant Gene</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Tumor Location</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">The longest diameter of tumor (mm)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Symptom</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Pathological Type</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Follow-up period (months)</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Clinical prognosis</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Country</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Number of lumps</th>
+                      <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">Author</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {files.filter(f => f.status === 'completed' || f.status === 'processing').map((f) => (
-                      <tr key={f.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 group">
-                        <td className="px-4 py-2 sticky left-0 bg-white group-hover:bg-slate-50/50 shadow-[1px_0_0_0_#f1f5f9] max-w-[200px] z-0">
-                          <div className="truncate font-medium text-slate-900" title={f.file.name}>
-                            {f.file.name}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2 min-w-[80px]">
-                          {f.status === 'processing' ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.gender} onChange={(v) => updateResultField(f.id, 'gender', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[80px]">
-                          {f.status === 'processing' ? <div className="h-6 w-10 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.age} onChange={(v) => updateResultField(f.id, 'age', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[80px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.height} onChange={(v) => updateResultField(f.id, 'height', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[80px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.weight} onChange={(v) => updateResultField(f.id, 'weight', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[100px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.heartRate} onChange={(v) => updateResultField(f.id, 'heartRate', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[120px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.systolicBP} onChange={(v) => updateResultField(f.id, 'systolicBP', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[120px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.diastolicBP} onChange={(v) => updateResultField(f.id, 'diastolicBP', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[200px]">
-                          {f.status === 'processing' ? <div className="h-6 w-32 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.comorbidities} onChange={(v) => updateResultField(f.id, 'comorbidities', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[150px]">
-                          {f.status === 'processing' ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.prkar1a} onChange={(v) => updateResultField(f.id, 'prkar1a', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[150px]">
-                          {f.status === 'processing' ? <div className="h-6 w-24 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.tumorLocation} onChange={(v) => updateResultField(f.id, 'tumorLocation', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[100px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.maxDiameterMm} onChange={(v) => updateResultField(f.id, 'maxDiameterMm', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[200px]">
-                          {f.status === 'processing' ? <div className="h-6 w-32 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.symptoms} onChange={(v) => updateResultField(f.id, 'symptoms', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[150px]">
-                          {f.status === 'processing' ? <div className="h-6 w-24 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.pathologyType} onChange={(v) => updateResultField(f.id, 'pathologyType', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[120px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.followUpMonths} onChange={(v) => updateResultField(f.id, 'followUpMonths', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[100px]">
-                          {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.isRecurrent} onChange={(v) => updateResultField(f.id, 'isRecurrent', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[100px]">
-                          {f.status === 'processing' ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.country} onChange={(v) => updateResultField(f.id, 'country', v)} />
-                          )}
-                        </td>
-                        <td className="px-4 py-2 min-w-[80px]">
-                          {f.status === 'processing' ? <div className="h-6 w-10 bg-slate-100 animate-pulse rounded" /> : (
-                            <EditableCell value={f.result?.tumorCount} onChange={(v) => updateResultField(f.id, 'tumorCount', v)} />
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {files.filter(f => f.status === 'completed' || f.status === 'processing').flatMap((f) => {
+                      const resultsToRender = (f.results && f.results.length > 0) ? f.results : [null];
+                      
+                      return resultsToRender.map((res, index) => (
+                        <tr key={`${f.id}-${index}`} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 group">
+                          <td className="px-4 py-2 sticky left-0 bg-white group-hover:bg-slate-50/50 shadow-[1px_0_0_0_#f1f5f9] max-w-[200px] z-0">
+                            <div className="truncate font-medium text-slate-900" title={f.file.name}>
+                              {f.file.name}{resultsToRender.length > 1 ? ` (Case ${index + 1})` : ''}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 min-w-[80px]">
+                            {f.status === 'processing' ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.gender} onChange={(v) => updateResultField(f.id, index, 'gender', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[80px]">
+                            {f.status === 'processing' ? <div className="h-6 w-10 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.age} onChange={(v) => updateResultField(f.id, index, 'age', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[80px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.height} onChange={(v) => updateResultField(f.id, index, 'height', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[80px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.weight} onChange={(v) => updateResultField(f.id, index, 'weight', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[100px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.heartRate} onChange={(v) => updateResultField(f.id, index, 'heartRate', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[120px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.systolicBP} onChange={(v) => updateResultField(f.id, index, 'systolicBP', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[120px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.diastolicBP} onChange={(v) => updateResultField(f.id, index, 'diastolicBP', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[200px]">
+                            {f.status === 'processing' ? <div className="h-6 w-32 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.comorbidities} onChange={(v) => updateResultField(f.id, index, 'comorbidities', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[150px]">
+                            {f.status === 'processing' ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.mutantGene} onChange={(v) => updateResultField(f.id, index, 'mutantGene', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[150px]">
+                            {f.status === 'processing' ? <div className="h-6 w-24 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.tumorLocation} onChange={(v) => updateResultField(f.id, index, 'tumorLocation', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[100px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.maxDiameterMm} onChange={(v) => updateResultField(f.id, index, 'maxDiameterMm', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[200px]">
+                            {f.status === 'processing' ? <div className="h-6 w-32 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.symptoms} onChange={(v) => updateResultField(f.id, index, 'symptoms', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[150px]">
+                            {f.status === 'processing' ? <div className="h-6 w-24 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.pathologyType} onChange={(v) => updateResultField(f.id, index, 'pathologyType', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[120px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.followUpMonths} onChange={(v) => updateResultField(f.id, index, 'followUpMonths', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[100px]">
+                            {f.status === 'processing' ? <div className="h-6 w-12 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.isRecurrent} onChange={(v) => updateResultField(f.id, index, 'isRecurrent', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[100px]">
+                            {f.status === 'processing' ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.country} onChange={(v) => updateResultField(f.id, index, 'country', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[80px]">
+                            {f.status === 'processing' ? <div className="h-6 w-10 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.tumorCount} onChange={(v) => updateResultField(f.id, index, 'tumorCount', v)} />
+                            )}
+                          </td>
+                          <td className="px-4 py-2 min-w-[150px]">
+                            {f.status === 'processing' ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" /> : (
+                              <EditableCell value={res?.author} onChange={(v) => updateResultField(f.id, index, 'author', v)} />
+                            )}
+                          </td>
+                        </tr>
+                      ));
+                    })}
                     {files.length === 0 && (
                       <tr>
-                        <td colSpan={18} className="px-4 py-20 text-center text-slate-400 italic">
-                          等待文件解析，暂无数据展示
+                        <td colSpan={19} className="px-4 py-20 text-center text-slate-400 italic">
+                          Waiting for file analysis, no data to display yet
                         </td>
                       </tr>
                     )}

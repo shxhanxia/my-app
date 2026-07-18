@@ -13,7 +13,7 @@ export interface ClinicalData {
   systolicBP: string | null;
   diastolicBP: string | null;
   comorbidities: string | null;
-  prkar1a: string | null;
+  mutantGene: string | null;
   tumorLocation: string | null;
   maxDiameterMm: number | string | null;
   symptoms: string | null;
@@ -22,18 +22,20 @@ export interface ClinicalData {
   isRecurrent: string | null;
   country: string | null;
   tumorCount: number | string | null;
+  author: string | null;
 }
 
 export interface ModelConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  isMultimodal?: boolean;
 }
 
 export interface ProcessingFile {
   file: File;
   id: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
-  result?: ClinicalData;
+  results?: ClinicalData[];
   error?: string;
 }

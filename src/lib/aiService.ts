@@ -1,70 +1,98 @@
 import { GoogleGenAI } from "@google/genai";
 import { ClinicalData, ModelConfig } from "../types";
 
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1]);
+    };
+    reader.onerror = error => reject(error);
+  });
+}
+
 export async function processBatchOfPdfs(
-  texts: { name: string; content: string }[],
+  batch: { name: string; content?: string, file?: File }[],
   config: ModelConfig
 ): Promise<ClinicalData[]> {
   const prompt = `
-您是一名专业的医学数据提取专家。请从以下提供的医学文献文本中提取特定的临床数据。
+You are a professional medical data extraction expert. Please extract specific clinical case data from the provided medical literature texts.
 
-提取规则：
-1. 【不产生幻觉】：如果文献中未提及某个字段的信息，请严格输出 null。不要进行主观臆断。
-2. 【病因/病理和肿瘤大小】：仔细阅读整个案例。如果提到多种尺寸(如超声尺寸 vs 病理标本尺寸)，优先取病理标本的最大径。例如 "3.5 x 2.5 cm" 表示最大径为 35 (mm)。"7 cm" 表示 70。
-3. 【单位转换】：
-   - age: 提取数字（岁）
-   - weight: 转换为 kg
-   - height: 转换为 cm
-   - maxDiameterMm: 统一转换为毫米 (mm) 的纯数字
-   - followUpMonths: 统一转换为月 (months) 的纯数字格式，如 6 weeks 转换为 1.5 或 1.2 等数值。
-4. 【症状 (symptoms)】：精确提取并在必要时翻译为中文（如：心悸、发热、腹部肿胀、右侧腰痛、全身无力、呼吸困难等）。如果明确是“偶然发现 (incidental finding)” 或者没有症状，输出 "无症状"。
-5. 【国家 (country)】：从作者的机构(Affiliations)信息中推断作者国家，并翻译为中文（如：UK -> 英国，Canada -> 加拿大，Spain -> 西班牙）。
-6. 【复发与否 (isRecurrent)】：如果有随访且提到复发，输出 "是"；如果明确"no evidence of recurrence"等，输出 "否"。如果没提，输出 null。
-7. 【肿瘤位置 (tumorLocation)】：给出具体位置并在括号内保留英文原名，如 "右心房 (Right atrial)", "左心房 (Left atrial)"。
-8. 【病理类型 (pathologyType)】：给出具体类型并在括号内保留英文，如 "异位肝 (Ectopic liver)", "粘液瘤 (Myxoma)"。
-9. 【格式限制】：必须返回一个合法的 JSON 数组，包含所有文档的结果。绝对不要包含任何 Markdown 标记 (如 \`\`\`json)，直接输出原始的 JSON 数组字符串。
+RULES:
+1. [No Hallucinations]: If information for a field is not mentioned in the literature, strictly output null. Do not make assumptions.
+2. [Multiple Cases per PDF]: A single literature file might report multiple clinical cases (e.g., Case 1, Case 2, Case 3). You MUST identify all cases and output ONE JSON object FOR EACH CASE. If a PDF contains 3 cases, you must return 3 objects with the same pdfName.
+3. [Language]: ALL OUTPUT VALUES MUST BE IN ENGLISH. Translate any extracted information to English if it is in another language.
+4. [Etiology/Pathology & Tumor Size]: Read the entire case carefully. If multiple sizes are mentioned (e.g., ultrasound size vs pathological specimen size), prefer the maximum diameter of the pathological specimen. For example, "3.5 x 2.5 cm" means max diameter is 35 (mm). "7 cm" means 70.
+5. [Unit Conversions]:
+   - age: extract number (years)
+   - weight: convert to kg
+   - height: convert to cm
+   - maxDiameterMm: uniformly convert to millimeters (mm) as a pure number.
+   - followUpMonths: uniformly convert to months as a pure number, e.g., 6 weeks -> 1.5.
+6. [Symptoms]: Extract precisely in English. If explicitly "incidental finding" or no symptoms, output "Asymptomatic".
+7. [Mutant Gene]: Extract the specific name of the mutated gene (or genes with abnormal expression), not limited to PRKAR1A.
+8. [Country]: Infer the author's country from the Affiliations and output in English (e.g., United Kingdom, Canada, Spain).
+9. [Author]: Extract the name of the first author.
+10. [Is Recurrent]: If follow-up mentions recurrence, output "Yes"; if explicitly "no evidence of recurrence", output "No". If not mentioned, output null.
+11. [Format]: MUST return a valid JSON array containing the results for all documents and cases. DO NOT include any Markdown formatting (like \`\`\`json), output the raw JSON array string directly.
 
-需要提取的 JSON 字段定义：
-- pdfName: string (使用我提供的文件名)
-- gender: "男" | "女" | null
+JSON FIELDS DEFINITION:
+- pdfName: string (Use the filename I provide)
+- gender: "Male" | "Female" | null
 - age: number | null
 - height: string | null
 - weight: string | null
-- heartRate: string | null (此时的心率，保留数字即可)
-- systolicBP: string | null (收缩压，数字)
-- diastolicBP: string | null (舒张压，数字)
-- comorbidities: string | null (合并症，如 "晚期多发性硬化症 / advanced multiple sclerosis" 等)
-- prkar1a: string | null
-- tumorLocation: string | null (如 "右心房 (Right atrial)")
+- heartRate: string | null (bpm, number only)
+- systolicBP: string | null (mmHg, number only)
+- diastolicBP: string | null (mmHg, number only)
+- comorbidities: string | null (e.g., "Advanced multiple sclerosis")
+- mutantGene: string | null (Specific mutant gene names)
+- tumorLocation: string | null (e.g., "Right atrium")
 - maxDiameterMm: number | null
-- symptoms: string | null (如 "心悸、发热..." 或 "无症状")
-- pathologyType: string | null
+- symptoms: string | null (e.g., "Palpitations, fever" or "Asymptomatic")
+- pathologyType: string | null (e.g., "Ectopic liver", "Myxoma")
 - followUpMonths: number | string | null
-- isRecurrent: "是" | "否" | null
-- country: string | null (作者国家中文名)
-- tumorCount: number | null (通常为 1)
-
-待处理文档摘要：
-${texts.map((t, i) => `--- 文档 ${i + 1} (文件名: ${t.name}) ---\n${t.content}\n`).join('\n')}
+- isRecurrent: "Yes" | "No" | null
+- country: string | null (First author's country)
+- tumorCount: number | null (Usually 1)
+- author: string | null (First author name)
 `;
 
-  if (!config.baseUrl || (config.baseUrl.includes('googleapis.com') && !config.baseUrl.includes('openai'))) {
-    return callGemini(prompt, config);
+  if (!config.baseUrl || config.baseUrl.includes('googleapis.com')) {
+    return callGemini(prompt, batch, config);
   } else {
-    return callOpenAICompatible(prompt, config);
+    return callOpenAICompatible(prompt, batch, config);
   }
 }
 
-async function callGemini(prompt: string, config: ModelConfig): Promise<ClinicalData[]> {
-  // Use user-provided key if available, else fall back to env key
+async function callGemini(prompt: string, batch: { name: string; content?: string, file?: File }[], config: ModelConfig): Promise<ClinicalData[]> {
   const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
   if (!apiKey) throw new Error("Missing Gemini API Key");
 
   const ai = new GoogleGenAI({ apiKey });
   
+  const contentsParts: any[] = [{ text: prompt }];
+
+  for (const item of batch) {
+    if (config.isMultimodal && item.file) {
+      contentsParts.push({ text: `--- DOCUMENT (Filename: ${item.name}) ---` });
+      const b64 = await fileToBase64(item.file);
+      contentsParts.push({
+        inlineData: {
+          mimeType: 'application/pdf',
+          data: b64
+        }
+      });
+    } else {
+      contentsParts.push({ text: `--- DOCUMENT (Filename: ${item.name}) ---\n${item.content}\n` });
+    }
+  }
+
   const response = await ai.models.generateContent({
-    model: config.model || "gemini-3-flash-preview",
-    contents: prompt,
+    model: config.model || "gemini-3.1-pro-preview",
+    contents: contentsParts,
     config: {
       responseMimeType: "application/json",
     }
@@ -73,23 +101,33 @@ async function callGemini(prompt: string, config: ModelConfig): Promise<Clinical
   const text = response.text;
   if (!text) throw new Error("AI returned empty response");
   
-  try {
-    let cleanText = text.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/i, '').trim();
-    // Fix extra trailing brackets or braces that some LLMs generate
-    cleanText = cleanText.replace(/\][\s\]]*$/, ']');
-    cleanText = cleanText.replace(/\}[\s\}]*$/, '}');
-    const data = JSON.parse(cleanText);
-    return Array.isArray(data) ? data : [data];
-  } catch (e) {
-    console.error("Failed to parse AI response:", text);
-    throw new Error("AI returned invalid JSON");
-  }
+  return parseAIResponse(text);
 }
 
-async function callOpenAICompatible(prompt: string, config: ModelConfig): Promise<ClinicalData[]> {
+async function callOpenAICompatible(prompt: string, batch: { name: string; content?: string, file?: File }[], config: ModelConfig): Promise<ClinicalData[]> {
   const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
   if (!apiKey) throw new Error("Missing API Key for custom endpoint");
   
+  const messagesContent: any[] = [{ type: 'text', text: prompt }];
+
+  for (const item of batch) {
+    if (config.isMultimodal && item.file) {
+      messagesContent.push({ type: 'text', text: `--- DOCUMENT (Filename: ${item.name}) ---` });
+      const b64 = await fileToBase64(item.file);
+      messagesContent.push({
+        type: 'inlineData',
+        inlineData: {
+          mimeType: 'application/pdf',
+          data: b64
+        }
+      });
+    } else {
+      messagesContent.push({ type: 'text', text: `--- DOCUMENT (Filename: ${item.name}) ---\n${item.content}\n` });
+    }
+  }
+
+  const stringContent = config.isMultimodal ? messagesContent : messagesContent.map(m => m.text).join('\n');
+
   const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -98,7 +136,7 @@ async function callOpenAICompatible(prompt: string, config: ModelConfig): Promis
     },
     body: JSON.stringify({
       model: config.model,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: stringContent }],
       response_format: { type: 'json_object' }
     })
   });
@@ -111,31 +149,35 @@ async function callOpenAICompatible(prompt: string, config: ModelConfig): Promis
   const result = await response.json();
   const content = result.choices[0].message.content;
 
+  return parseAIResponse(content);
+}
+
+function parseAIResponse(text: string): ClinicalData[] {
   try {
-    let cleanText = content.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/i, '').trim();
+    let cleanText = text.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/i, '').trim();
     cleanText = cleanText.replace(/\][\s\]]*$/, ']');
     cleanText = cleanText.replace(/\}[\s\}]*$/, '}');
     const data = JSON.parse(cleanText);
-    // Some models might wrap it in a root key like "data" or "results"
     const finalData = data.results || data.data || data;
     return Array.isArray(finalData) ? finalData : [finalData];
   } catch (e) {
-    throw new Error("Custom AI endpoint returned invalid JSON");
+    console.error("Failed to parse AI response:", text);
+    throw new Error("AI returned invalid JSON");
   }
 }
 
 export async function testConnection(config: ModelConfig): Promise<{ success: boolean; message?: string }> {
   try {
     const testPrompt = "Hello, respond with 'pong' in JSON format: {\"res\": \"pong\"}";
-    if (!config.baseUrl || (config.baseUrl.includes('googleapis.com') && !config.baseUrl.includes('openai'))) {
+    if (!config.baseUrl || config.baseUrl.includes('googleapis.com')) {
       const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
       const ai = new GoogleGenAI({ apiKey });
       await ai.models.generateContent({
-        model: config.model || "gemini-3-flash-preview",
+        model: config.model || "gemini-3.1-pro-preview",
         contents: testPrompt
       });
     } else {
-      await callOpenAICompatible(testPrompt, config);
+      await callOpenAICompatible(testPrompt, [], config);
     }
     return { success: true };
   } catch (e: any) {
@@ -143,3 +185,4 @@ export async function testConnection(config: ModelConfig): Promise<{ success: bo
     return { success: false, message: e.message || String(e) };
   }
 }
+
