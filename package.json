@@ -17,7 +17,7 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "lucide-react": "^1.26.0",
+    "lucide-react": "^1.27.0",
     "motion": "^12.42.2",
     "pdfjs-dist": "^6.1.200",
     "react": "^19.2.8",
