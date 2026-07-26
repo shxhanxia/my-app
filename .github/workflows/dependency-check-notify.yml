@@ -1,0 +1,223 @@
+name: Dependency Check Notify
+
+on:
+    schedule:
+        - cron: '15 1 * * 0'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    issues: write
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Check outdated dependencies
+              id: outdated
+              shell: bash
+              run: |
+                  set +e
+                  npm outdated --json > outdated.json
+                  status=$?
+
+                  if [ "$status" -eq 0 ]; then
+                    echo "has_updates=false" >> "$GITHUB_OUTPUT"
+                    echo "{}" > outdated.json
+                  elif [ "$status" -eq 1 ]; then
+                    echo "has_updates=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "npm outdated failed with status $status"
+                    exit "$status"
+                  fi
+
+            - name: Build dependency report
+              run: |
+                  node --input-type=module <<'EOF'
+                  import { readFile, writeFile } from 'node:fs/promises';
+
+                  const data = JSON.parse(await readFile('outdated.json', 'utf8'));
+                  const rows = Object.entries(data);
+                  let body = '# 依赖更新提醒\n\n';
+
+                  if (rows.length) {
+                    body += '检测到有可更新依赖。请先在本地验证通过后，再手动推送到远程。\n\n';
+                    body += '| 包名 | 当前版本 | 建议版本 | 最新版本 |\n|---|---|---|---|\n';
+                    for (const [name, info] of rows) {
+                      body += `| ${name} | ${info.current ?? '-'} | ${info.wanted ?? '-'} | ${info.latest ?? '-'} |\n`;
+                    }
+                  } else {
+                    body += '依赖已是最新，无需升级。\n';
+                  }
+
+                  body += `\n- 检测时间: ${new Date().toISOString()}\n- 工作流: Dependency Check Notify\n`;
+                  await writeFile('dependency-report.md', body, 'utf8');
+                  EOF
+
+            - name: Check workflow action versions
+              id: action_versions
+              uses: actions/github-script@v9
+              with:
+                  script: |
+                      const fs = await import('node:fs/promises');
+                      const path = await import('node:path');
+
+                      const workspace = process.env.GITHUB_WORKSPACE;
+                      const workflowsDir = path.join(workspace, '.github', 'workflows');
+                      const files = (await fs.readdir(workflowsDir)).filter((name) => /\.ya?ml$/i.test(name));
+
+                      const usesRegex = /^\s*uses:\s*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@([^\s#'\"]+)/gm;
+                      const cache = new Map();
+                      const updates = [];
+
+                      const getLatestTag = async (repoFullName) => {
+                        if (cache.has(repoFullName)) {
+                          return cache.get(repoFullName);
+                        }
+
+                        const [owner, repo] = repoFullName.split('/');
+                        try {
+                          const release = await github.rest.repos.getLatestRelease({ owner, repo });
+                          const tag = release.data.tag_name;
+                          cache.set(repoFullName, tag);
+                          return tag;
+                        } catch (error) {
+                          core.warning(`Unable to read latest release for ${repoFullName}: ${error.message}`);
+                          cache.set(repoFullName, null);
+                          return null;
+                        }
+                      };
+
+                      for (const file of files) {
+                        const fullPath = path.join(workflowsDir, file);
+                        const content = await fs.readFile(fullPath, 'utf8');
+                        let match;
+
+                        while ((match = usesRegex.exec(content)) !== null) {
+                          const repoFullName = match[1];
+                          const currentRef = match[2];
+                          const currentMajorMatch = currentRef.match(/^v(\d+)(?:$|[.-])/);
+
+                          if (!currentMajorMatch) {
+                            continue;
+                          }
+
+                          const latestTag = await getLatestTag(repoFullName);
+                          if (!latestTag) {
+                            continue;
+                          }
+
+                          const latestMajorMatch = latestTag.match(/^v(\d+)(?:$|[.-])/);
+                          if (!latestMajorMatch) {
+                            continue;
+                          }
+
+                          const currentMajor = Number(currentMajorMatch[1]);
+                          const latestMajor = Number(latestMajorMatch[1]);
+
+                          if (latestMajor > currentMajor) {
+                            updates.push({
+                              file,
+                              action: repoFullName,
+                              current: currentRef,
+                              latest: latestTag
+                            });
+                          }
+                        }
+                      }
+
+                      let report = '# GitHub Actions 版本提醒\n\n';
+                      if (updates.length) {
+                        report += '检测到 workflow 中存在可升级的 GitHub Action 主版本。请先在本地验证后再手动推送。\n\n';
+                        report += '| 文件 | Action | 当前引用 | 最新发布 |\n|---|---|---|---|\n';
+                        for (const item of updates) {
+                          report += `| ${item.file} | ${item.action} | ${item.current} | ${item.latest} |\n`;
+                        }
+                      } else {
+                        report += 'workflow 中的 Action 主版本未检测到可升级项。\n';
+                      }
+
+                      report += `\n- 检测时间: ${new Date().toISOString()}\n- 扫描目录: .github/workflows\n`;
+                      await fs.writeFile(path.join(workspace, 'actions-report.md'), report, 'utf8');
+
+                      core.setOutput('has_action_updates', updates.length ? 'true' : 'false');
+
+            - name: Create or update notification issue
+              if: steps.outdated.outputs.has_updates == 'true' || steps.action_versions.outputs.has_action_updates == 'true'
+              uses: actions/github-script@v9
+              with:
+                  script: |
+                      const fs = await import('node:fs/promises');
+                      const title = 'Dependency/Action updates available (local verification required)';
+                      const dependencyBody = await fs.readFile('dependency-report.md', 'utf8');
+                      const actionsBody = await fs.readFile('actions-report.md', 'utf8');
+                      const body = `${dependencyBody}\n\n---\n\n${actionsBody}`;
+                      const { owner, repo } = context.repo;
+
+                      const { data: issues } = await github.rest.issues.listForRepo({
+                        owner,
+                        repo,
+                        state: 'open',
+                        per_page: 100
+                      });
+
+                      const existing = issues.find((i) => i.title === title);
+
+                      if (existing) {
+                        await github.rest.issues.update({
+                          owner,
+                          repo,
+                          issue_number: existing.number,
+                          body
+                        });
+                        core.info('Updated existing dependency notification issue.');
+                      } else {
+                        await github.rest.issues.create({
+                          owner,
+                          repo,
+                          title,
+                          body
+                        });
+                        core.info('Created new dependency notification issue.');
+                      }
+
+            - name: Close notification issue when no updates
+              if: steps.outdated.outputs.has_updates != 'true' && steps.action_versions.outputs.has_action_updates != 'true'
+              uses: actions/github-script@v9
+              with:
+                  script: |
+                      const title = 'Dependency/Action updates available (local verification required)';
+                      const { owner, repo } = context.repo;
+
+                      const { data: issues } = await github.rest.issues.listForRepo({
+                        owner,
+                        repo,
+                        state: 'open',
+                        per_page: 100
+                      });
+
+                      const existing = issues.find((i) => i.title === title);
+
+                      if (existing) {
+                        await github.rest.issues.update({
+                          owner,
+                          repo,
+                          issue_number: existing.number,
+                          state: 'closed'
+                        });
+                        core.info('Closed dependency notification issue because everything is up to date.');
+                      } else {
+                        core.info('No open dependency notification issue found.');
+                      }
