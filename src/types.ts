@@ -39,3 +39,5 @@ export interface ProcessingFile {
   results?: ClinicalData[];
   error?: string;
 }
+
+export type TestStatus = 'idle' | 'testing' | 'success' | 'error';

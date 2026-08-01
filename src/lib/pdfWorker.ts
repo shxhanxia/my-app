@@ -1,9 +1,10 @@
-import * as pdfjs from 'pdfjs-dist';
-
-// Use a stable CDN for the worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-
 export async function extractTextFromPdf(file: File): Promise<string> {
+  // Lazy-load the heavy pdfjs library only when a PDF is actually processed.
+  const pdfjs = await import('pdfjs-dist');
+
+  // Use a stable CDN for the worker
+  pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   let fullText = '';

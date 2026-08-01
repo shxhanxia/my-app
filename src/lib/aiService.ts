@@ -1,5 +1,7 @@
-import { GoogleGenAI } from "@google/genai";
 import { ClinicalData, ModelConfig } from "../types";
+import { parseAIResponse } from "./parseAIResponse";
+
+type DocumentItem = { name: string; content?: string; file?: File };
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -13,11 +15,8 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export async function processBatchOfPdfs(
-  batch: { name: string; content?: string, file?: File }[],
-  config: ModelConfig
-): Promise<ClinicalData[]> {
-  const prompt = `
+function buildExtractionPrompt(): string {
+  return `
 You are a professional medical data extraction expert. Please extract specific clinical case data from the provided medical literature texts.
 
 RULES:
@@ -59,23 +58,46 @@ JSON FIELDS DEFINITION:
 - tumorCount: number | null (Usually 1)
 - author: string | null (First author name)
 `;
+}
 
+/**
+ * Process a single PDF against the AI. One independent API call per file, so a
+ * failure on any single file does not take down the whole batch.
+ */
+export async function processPdf(
+  item: DocumentItem,
+  config: ModelConfig
+): Promise<ClinicalData[]> {
+  const prompt = buildExtractionPrompt();
   if (!config.baseUrl || config.baseUrl.includes('googleapis.com')) {
-    return callGemini(prompt, batch, config);
+    return callGemini(prompt, [item], config);
   } else {
-    return callOpenAICompatible(prompt, batch, config);
+    return callOpenAICompatible(prompt, [item], config);
   }
 }
 
-async function callGemini(prompt: string, batch: { name: string; content?: string, file?: File }[], config: ModelConfig): Promise<ClinicalData[]> {
+/**
+ * Process a batch of PDFs. Kept for compatibility; each file is processed
+ * independently and the results are flattened.
+ */
+export async function processBatchOfPdfs(
+  batch: DocumentItem[],
+  config: ModelConfig
+): Promise<ClinicalData[]> {
+  const results = await Promise.all(batch.map((item) => processPdf(item, config)));
+  return results.flat();
+}
+
+async function callGemini(prompt: string, items: DocumentItem[], config: ModelConfig): Promise<ClinicalData[]> {
+  const { GoogleGenAI } = await import("@google/genai");
   const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
   if (!apiKey) throw new Error("Missing Gemini API Key");
 
   const ai = new GoogleGenAI({ apiKey });
-  
+
   const contentsParts: any[] = [{ text: prompt }];
 
-  for (const item of batch) {
+  for (const item of items) {
     if (config.isMultimodal && item.file) {
       contentsParts.push({ text: `--- DOCUMENT (Filename: ${item.name}) ---` });
       const b64 = await fileToBase64(item.file);
@@ -97,28 +119,28 @@ async function callGemini(prompt: string, batch: { name: string; content?: strin
       responseMimeType: "application/json",
     }
   });
-  
+
   const text = response.text;
   if (!text) throw new Error("AI returned empty response");
-  
+
   return parseAIResponse(text);
 }
 
-async function callOpenAICompatible(prompt: string, batch: { name: string; content?: string, file?: File }[], config: ModelConfig): Promise<ClinicalData[]> {
+async function callOpenAICompatible(prompt: string, items: DocumentItem[], config: ModelConfig): Promise<ClinicalData[]> {
   const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
   if (!apiKey) throw new Error("Missing API Key for custom endpoint");
-  
+
   const messagesContent: any[] = [{ type: 'text', text: prompt }];
 
-  for (const item of batch) {
+  for (const item of items) {
     if (config.isMultimodal && item.file) {
       messagesContent.push({ type: 'text', text: `--- DOCUMENT (Filename: ${item.name}) ---` });
       const b64 = await fileToBase64(item.file);
+      const mimeType = item.file.type || 'application/pdf';
       messagesContent.push({
-        type: 'inlineData',
-        inlineData: {
-          mimeType: 'application/pdf',
-          data: b64
+        type: 'image_url',
+        image_url: {
+          url: `data:${mimeType};base64,${b64}`
         }
       });
     } else {
@@ -152,24 +174,11 @@ async function callOpenAICompatible(prompt: string, batch: { name: string; conte
   return parseAIResponse(content);
 }
 
-function parseAIResponse(text: string): ClinicalData[] {
-  try {
-    let cleanText = text.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/i, '').trim();
-    cleanText = cleanText.replace(/\][\s\]]*$/, ']');
-    cleanText = cleanText.replace(/\}[\s\}]*$/, '}');
-    const data = JSON.parse(cleanText);
-    const finalData = data.results || data.data || data;
-    return Array.isArray(finalData) ? finalData : [finalData];
-  } catch (e) {
-    console.error("Failed to parse AI response:", text);
-    throw new Error("AI returned invalid JSON");
-  }
-}
-
 export async function testConnection(config: ModelConfig): Promise<{ success: boolean; message?: string }> {
   try {
     const testPrompt = "Hello, respond with 'pong' in JSON format: {\"res\": \"pong\"}";
     if (!config.baseUrl || config.baseUrl.includes('googleapis.com')) {
+      const { GoogleGenAI } = await import("@google/genai");
       const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
       const ai = new GoogleGenAI({ apiKey });
       await ai.models.generateContent({
@@ -185,4 +194,3 @@ export async function testConnection(config: ModelConfig): Promise<{ success: bo
     return { success: false, message: e.message || String(e) };
   }
 }
-

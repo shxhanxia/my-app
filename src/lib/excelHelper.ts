@@ -1,7 +1,9 @@
-import * as XLSX from 'xlsx';
-import { ClinicalData } from '../types';
+import type { ClinicalData } from '../types';
 
-export function exportToExcel(data: ClinicalData[]) {
+export async function exportToExcel(data: ClinicalData[]) {
+  // Lazy-load the heavy xlsx library only when the user actually exports.
+  const XLSX = await import('xlsx');
+
   const worksheetData = data.map(item => ({
     'Filename': item.pdfName,
     'Gender': item.gender || 'Null',
