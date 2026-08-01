@@ -1,5 +1,7 @@
 import { Loader2, Download } from 'lucide-react';
 import EditableCell from './EditableCell';
+import { cn } from '../lib/utils';
+import { CLINICAL_FIELDS, EDITABLE_FIELDS } from '../lib/clinicalFields';
 import type { ClinicalData, ProcessingFile } from '../types';
 
 interface ResultsTableProps {
@@ -50,63 +52,18 @@ export default function ResultsTable({
                 <table className="w-full text-left text-sm border-collapse min-w-max">
                     <thead className="bg-slate-50/80 sticky top-0 backdrop-blur-sm z-10">
                         <tr>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200 sticky left-0 bg-slate-50/95 shadow-[1px_0_0_0_#e2e8f0]">
-                                Filename
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Gender
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Age (years)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Height (cm)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Weight (kg)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Heart rate (bpm)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                SBP (mmHg)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                DBP (mmHg)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Complication
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Mutant Gene
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Tumor Location
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                The longest diameter of tumor (mm)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Symptom
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Pathological Type
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Follow-up period (months)
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Clinical prognosis
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Country
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Number of lumps
-                            </th>
-                            <th className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200">
-                                Author
-                            </th>
+                            {CLINICAL_FIELDS.map((field) => (
+                                <th
+                                    key={field.key}
+                                    className={cn(
+                                        'px-4 py-3 font-semibold text-slate-700 whitespace-nowrap border-b border-slate-200',
+                                        field.key === 'pdfName' &&
+                                            'sticky left-0 bg-slate-50/95 shadow-[1px_0_0_0_#e2e8f0]',
+                                    )}
+                                >
+                                    {field.label}
+                                </th>
+                            ))}
                         </tr>
                     </thead>
                     <tbody>
@@ -141,265 +98,40 @@ export default function ResultsTable({
                                         {res === null &&
                                         f.status === 'processing' ? (
                                             // Skeleton row while processing
-                                            Array.from({ length: 18 }).map(
-                                                (_, i) => (
-                                                    <td
-                                                        key={i}
-                                                        className="px-4 py-2"
-                                                    >
-                                                        <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" />
-                                                    </td>
-                                                ),
-                                            )
+                                            Array.from({
+                                                length: EDITABLE_FIELDS.length,
+                                            }).map((_, i) => (
+                                                <td
+                                                    key={i}
+                                                    className="px-4 py-2"
+                                                >
+                                                    <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" />
+                                                </td>
+                                            ))
                                         ) : (
-                                            <>
-                                                <td className="px-4 py-2 min-w-[80px]">
-                                                    <EditableCell
-                                                        value={res?.gender}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'gender',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[80px]">
-                                                    <EditableCell
-                                                        value={res?.age}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'age',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[80px]">
-                                                    <EditableCell
-                                                        value={res?.height}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'height',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[80px]">
-                                                    <EditableCell
-                                                        value={res?.weight}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'weight',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[100px]">
-                                                    <EditableCell
-                                                        value={res?.heartRate}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'heartRate',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[120px]">
-                                                    <EditableCell
-                                                        value={res?.systolicBP}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'systolicBP',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[120px]">
+                                            EDITABLE_FIELDS.map((field) => (
+                                                <td
+                                                    key={field.key}
+                                                    className={cn(
+                                                        'px-4 py-2',
+                                                        field.cellClass,
+                                                    )}
+                                                >
                                                     <EditableCell
                                                         value={
-                                                            res?.diastolicBP
+                                                            res?.[field.key]
                                                         }
                                                         onChange={(v) =>
                                                             onUpdateResult(
                                                                 f.id,
                                                                 index,
-                                                                'diastolicBP',
+                                                                field.key,
                                                                 v,
                                                             )
                                                         }
                                                     />
                                                 </td>
-                                                <td className="px-4 py-2 min-w-[200px]">
-                                                    <EditableCell
-                                                        value={
-                                                            res?.comorbidities
-                                                        }
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'comorbidities',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[150px]">
-                                                    <EditableCell
-                                                        value={res?.mutantGene}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'mutantGene',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[150px]">
-                                                    <EditableCell
-                                                        value={
-                                                            res?.tumorLocation
-                                                        }
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'tumorLocation',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[100px]">
-                                                    <EditableCell
-                                                        value={
-                                                            res?.maxDiameterMm
-                                                        }
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'maxDiameterMm',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[200px]">
-                                                    <EditableCell
-                                                        value={res?.symptoms}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'symptoms',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[150px]">
-                                                    <EditableCell
-                                                        value={
-                                                            res?.pathologyType
-                                                        }
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'pathologyType',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[120px]">
-                                                    <EditableCell
-                                                        value={
-                                                            res?.followUpMonths
-                                                        }
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'followUpMonths',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[100px]">
-                                                    <EditableCell
-                                                        value={res?.isRecurrent}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'isRecurrent',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[100px]">
-                                                    <EditableCell
-                                                        value={res?.country}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'country',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[80px]">
-                                                    <EditableCell
-                                                        value={res?.tumorCount}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'tumorCount',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-2 min-w-[150px]">
-                                                    <EditableCell
-                                                        value={res?.author}
-                                                        onChange={(v) =>
-                                                            onUpdateResult(
-                                                                f.id,
-                                                                index,
-                                                                'author',
-                                                                v,
-                                                            )
-                                                        }
-                                                    />
-                                                </td>
-                                            </>
+                                            ))
                                         )}
                                     </tr>
                                 ));
@@ -407,7 +139,7 @@ export default function ResultsTable({
                         {files.length === 0 && (
                             <tr>
                                 <td
-                                    colSpan={19}
+                                    colSpan={CLINICAL_FIELDS.length + 1}
                                     className="px-4 py-20 text-center text-slate-400 italic"
                                 >
                                     Waiting for file analysis, no data to

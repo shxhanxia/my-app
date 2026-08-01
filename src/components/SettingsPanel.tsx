@@ -78,7 +78,7 @@ export default function SettingsPanel({
                                     sent directly to the model instead of
                                     extracting text locally. This requires a
                                     model that natively supports multimodal PDF
-                                    reading (e.g. Gemini 1.5 Pro).
+                                    reading (e.g. Gemini models).
                                 </div>
                             </label>
                         </div>

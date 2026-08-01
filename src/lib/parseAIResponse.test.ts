@@ -53,4 +53,36 @@ describe('parseAIResponse', () => {
     it('throws on invalid JSON', () => {
         expect(() => parseAIResponse('not json at all')).toThrow();
     });
+
+    it('fills missing fields with null', () => {
+        const out = parseAIResponse('[{"pdfName":"g.pdf"}]');
+        expect(out[0].gender).toBeNull();
+        expect(out[0].author).toBeNull();
+        expect(out[0].pdfName).toBe('g.pdf');
+    });
+
+    it('coerces numeric strings into numbers', () => {
+        const out = parseAIResponse(
+            '[{"pdfName":"h.pdf","age":"35","maxDiameterMm":"4.2","tumorCount":2}]',
+        );
+        expect(out[0].age).toBe(35);
+        expect(out[0].maxDiameterMm).toBe(4.2);
+        expect(out[0].tumorCount).toBe(2);
+    });
+
+    it('keeps non-numeric strings and nulls empty ones', () => {
+        const out = parseAIResponse(
+            '[{"pdfName":"i.pdf","age":"","followUpMonths":"6 weeks"}]',
+        );
+        expect(out[0].age).toBeNull();
+        expect(out[0].followUpMonths).toBe('6 weeks');
+    });
+
+    it('drops non-object entries from the array', () => {
+        const out = parseAIResponse(
+            '[{"pdfName":"j.pdf"},"garbage",123,null]',
+        );
+        expect(out).toHaveLength(1);
+        expect(out[0].pdfName).toBe('j.pdf');
+    });
 });

@@ -3,7 +3,7 @@ export default function EditableCell({
     onChange,
     placeholder = 'Null',
 }: {
-    value: any;
+    value: string | number | null | undefined;
     onChange: (v: string | null) => void;
     placeholder?: string;
 }) {

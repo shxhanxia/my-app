@@ -1,58 +1,45 @@
 import type { ClinicalData } from '../types';
+import { CLINICAL_FIELDS } from './clinicalFields';
+
+/**
+ * Build the export workbook. Extracted from exportToExcel so it can be unit
+ * tested without a browser. The heavy exceljs library is lazy-loaded.
+ */
+export async function buildWorkbook(data: ClinicalData[]) {
+    const ExcelJS = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('ExtractedData');
+
+    sheet.columns = CLINICAL_FIELDS.map((f) => ({ width: f.width }));
+
+    const header = sheet.addRow(CLINICAL_FIELDS.map((f) => f.label));
+    header.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF334155' },
+        };
+        cell.alignment = { vertical: 'middle' };
+    });
+
+    for (const item of data) {
+        sheet.addRow(CLINICAL_FIELDS.map((f) => item[f.key] ?? 'Null'));
+    }
+
+    return workbook;
+}
 
 export async function exportToExcel(data: ClinicalData[]) {
-  // Lazy-load the heavy xlsx library only when the user actually exports.
-  const XLSX = await import('xlsx');
-
-  const worksheetData = data.map(item => ({
-    'Filename': item.pdfName,
-    'Gender': item.gender || 'Null',
-    'Age (years)': item.age ?? 'Null',
-    'Height (cm)': item.height || 'Null',
-    'Weight (kg)': item.weight || 'Null',
-    'Heart rate (bpm)': item.heartRate || 'Null',
-    'SBP (mmHg)': item.systolicBP || 'Null',
-    'DBP (mmHg)': item.diastolicBP || 'Null',
-    'Complication': item.comorbidities || 'Null',
-    'Mutant Gene': item.mutantGene || 'Null',
-    'Tumor Location': item.tumorLocation || 'Null',
-    'The longest diameter of tumor (mm)': item.maxDiameterMm ?? 'Null',
-    'Symptom': item.symptoms || 'Null',
-    'Pathological Type': item.pathologyType || 'Null',
-    'Follow-up period (months)': item.followUpMonths ?? 'Null',
-    'Clinical prognosis': item.isRecurrent || 'Null',
-    'Country': item.country || 'Null',
-    'Number of lumps': item.tumorCount ?? 'Null',
-    'Author': item.author || 'Null'
-  }));
-
-  const worksheet = XLSX.utils.json_to_sheet(worksheetData);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'ExtractedData');
-
-  // Set column widths
-  const wscols = [
-    { wch: 20 }, // name
-    { wch: 10 }, // gender
-    { wch: 10 }, // age
-    { wch: 15 }, // height
-    { wch: 15 }, // weight
-    { wch: 20 }, // hr
-    { wch: 15 }, // sbp
-    { wch: 15 }, // dbp
-    { wch: 20 }, // comorbid
-    { wch: 15 }, // mutantGene
-    { wch: 20 }, // loc
-    { wch: 35 }, // dia
-    { wch: 20 }, // sym
-    { wch: 20 }, // path
-    { wch: 25 }, // follow
-    { wch: 20 }, // recur
-    { wch: 15 }, // country
-    { wch: 20 }, // count
-    { wch: 15 }, // author
-  ];
-  worksheet['!cols'] = wscols;
-
-  XLSX.writeFile(workbook, `Clinical_Data_Extraction_${new Date().toISOString().split('T')[0]}.xlsx`);
+    const workbook = await buildWorkbook(data);
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Clinical_Data_Extraction_${new Date().toISOString().split('T')[0]}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
 }

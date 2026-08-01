@@ -1,9 +1,12 @@
+import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
+
 export async function extractTextFromPdf(file: File): Promise<string> {
   // Lazy-load the heavy pdfjs library only when a PDF is actually processed.
   const pdfjs = await import('pdfjs-dist');
 
-  // Use a stable CDN for the worker
-  pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+  // Use the locally bundled worker (Vite emits it as an asset) instead of a
+  // CDN: no runtime network dependency and the version always matches.
+  pdfjs.GlobalWorkerOptions.workerPort = new PdfWorker();
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;

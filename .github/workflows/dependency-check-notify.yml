@@ -2,7 +2,8 @@ name: Dependency Check Notify
 
 on:
     schedule:
-        - cron: '15 1 * * 0'
+        # Run every Saturday (6) and Sunday (0) at 01:15 UTC
+        - cron: '15 1 * * 0,6'
     workflow_dispatch:
 
 permissions:

@@ -14,10 +14,12 @@ import type {
     ProcessingFile,
     TestStatus,
 } from './types';
+import {
+    DEFAULT_MODEL,
+    CONFIG_STORAGE_KEY,
+    RESULTS_STORAGE_KEY,
+} from './config';
 import logo from './logo.jpg';
-
-const STORAGE_KEY = 'ai_clinical_config';
-const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 
 export default function App() {
     const [modelConfig, setModelConfig] = useState<ModelConfig>({
@@ -39,11 +41,14 @@ export default function App() {
     const [testMessage, setTestMessage] = useState('');
 
     const cancelRef = useRef(false);
+    const abortRef = useRef<AbortController | null>(null);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const testTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Load settings from localStorage on mount
+    // Load settings from localStorage on mount, and restore any completed
+    // results so a page refresh does not lose the extracted data.
     useEffect(() => {
-        const saved = localStorage.getItem(STORAGE_KEY);
+        const saved = localStorage.getItem(CONFIG_STORAGE_KEY);
         if (saved) {
             try {
                 setModelConfig((prev) => ({ ...prev, ...JSON.parse(saved) }));
@@ -51,40 +56,105 @@ export default function App() {
                 console.error('Failed to load settings from localStorage');
             }
         }
+        try {
+            const raw = localStorage.getItem(RESULTS_STORAGE_KEY);
+            if (raw) {
+                const restored = JSON.parse(raw) as {
+                    id: string;
+                    name: string;
+                    results: ClinicalData[];
+                }[];
+                if (Array.isArray(restored) && restored.length > 0) {
+                    setFiles((prev) =>
+                        prev.length === 0
+                            ? restored.map((r) => ({
+                                  id: r.id,
+                                  file: new File([], r.name),
+                                  status: 'completed' as const,
+                                  results: r.results,
+                              }))
+                            : prev,
+                    );
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load results from localStorage');
+        }
     }, []);
+
+    // Persist completed results (debounced). ProcessingFile holds a File
+    // object which cannot be serialized, so only finished results are saved.
+    useEffect(() => {
+        if (isProcessing) return;
+        const saved = files
+            .filter(
+                (f) =>
+                    f.status === 'completed' &&
+                    f.results &&
+                    f.results.length > 0,
+            )
+            .map((f) => ({
+                id: f.id,
+                name: f.file.name,
+                results: f.results,
+            }));
+        const timer = setTimeout(() => {
+            try {
+                localStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(saved));
+            } catch (e) {
+                console.error('Failed to persist results to localStorage');
+            }
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [files, isProcessing]);
 
     // Update state immediately, but debounce the localStorage write.
     const saveSettings = (newConfig: ModelConfig) => {
         setModelConfig(newConfig);
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(() => {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(newConfig));
+            localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(newConfig));
         }, 300);
     };
 
     const handleTestConnection = async () => {
         setTestStatus('testing');
         setTestMessage('');
+        // Clear any previous auto-reset timer so a rapid re-test does not get
+        // hidden by the earlier timer.
+        if (testTimerRef.current) clearTimeout(testTimerRef.current);
         const result = await testConnection(modelConfig);
         setTestStatus(result.success ? 'success' : 'error');
         if (!result.success && result.message) {
             setTestMessage(result.message);
         }
-        setTimeout(() => {
+        testTimerRef.current = setTimeout(() => {
             setTestStatus('idle');
             setTestMessage('');
         }, 4000);
     };
 
     const addFiles = (incoming: File[]) => {
-        const newFiles: ProcessingFile[] = incoming
-            .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-            .map((file) => ({
-                file,
-                id: Math.random().toString(36).substring(7) + Date.now(),
-                status: 'pending' as const,
-            }));
-        setFiles((prev) => [...prev, ...newFiles]);
+        const pdfs = incoming.filter((f) =>
+            f.name.toLowerCase().endsWith('.pdf'),
+        );
+        setFiles((prev) => {
+            // Skip duplicates (same name + size) so re-drops do not double
+            // the API cost.
+            const existingKeys = new Set(
+                prev.map((f) => `${f.file.name}:${f.file.size}`),
+            );
+            const newFiles: ProcessingFile[] = pdfs
+                .filter((f) => !existingKeys.has(`${f.name}:${f.size}`))
+                .map((file) => ({
+                    file,
+                    id:
+                        Math.random().toString(36).substring(7) +
+                        Date.now(),
+                    status: 'pending' as const,
+                }));
+            return [...prev, ...newFiles];
+        });
     };
 
     const removeFile = (id: string) => {
@@ -137,6 +207,8 @@ export default function App() {
         if (pendingFiles.length === 0) return;
 
         cancelRef.current = false;
+        abortRef.current = new AbortController();
+        const signal = abortRef.current.signal;
         setIsProcessing(true);
         setProgress({ done: 0, total: pendingFiles.length });
 
@@ -151,12 +223,14 @@ export default function App() {
                     results = await processPdf(
                         { name: pf.file.name, file: pf.file },
                         modelConfig,
+                        signal,
                     );
                 } else {
                     const content = await extractTextFromPdf(pf.file);
                     results = await processPdf(
                         { name: pf.file.name, content },
                         modelConfig,
+                        signal,
                     );
                 }
                 setFiles((prev) =>
@@ -167,18 +241,27 @@ export default function App() {
                     ),
                 );
             } catch (error: any) {
-                console.error(`Processing failed for ${pf.file.name}:`, error);
-                setFiles((prev) =>
-                    prev.map((f) =>
-                        f.id === pf.id
-                            ? {
-                                  ...f,
-                                  status: 'error',
-                                  error: error?.message || String(error),
-                              }
-                            : f,
-                    ),
-                );
+                if (cancelRef.current || error?.name === 'AbortError') {
+                    // Canceled: return the file to pending so it can be
+                    // re-run later, instead of showing a spurious error.
+                    setFileStatus(pf.id, 'pending');
+                } else {
+                    console.error(
+                        `Processing failed for ${pf.file.name}:`,
+                        error,
+                    );
+                    setFiles((prev) =>
+                        prev.map((f) =>
+                            f.id === pf.id
+                                ? {
+                                      ...f,
+                                      status: 'error',
+                                      error: error?.message || String(error),
+                                  }
+                                : f,
+                        ),
+                    );
+                }
             } finally {
                 setProgress((p) =>
                     p ? { done: p.done + 1, total: p.total } : p,
@@ -202,6 +285,10 @@ export default function App() {
 
     const cancelProcessing = () => {
         cancelRef.current = true;
+        // Abort in-flight API calls; files they were working on revert to
+        // pending so they can be re-run.
+        abortRef.current?.abort();
+        abortRef.current = null;
         setIsProcessing(false);
         setProgress(null);
     };

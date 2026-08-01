@@ -1,7 +1,36 @@
 import { ClinicalData, ModelConfig } from "../types";
 import { parseAIResponse } from "./parseAIResponse";
+import { CLINICAL_FIELDS } from "./clinicalFields";
+import { DEFAULT_MODEL } from "../config";
 
 type DocumentItem = { name: string; content?: string; file?: File };
+
+/**
+ * Client-side cancellation for APIs that do not accept an AbortSignal
+ * directly (the @google/genai SDK). Rejects with an AbortError once the
+ * signal fires; the underlying request keeps running but its result is
+ * ignored. The SDK documents its own abortSignal as client-only too.
+ */
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -16,6 +45,11 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 function buildExtractionPrompt(): string {
+  const fieldLines = CLINICAL_FIELDS.map(f => {
+    const hint = f.promptHint ? ` (${f.promptHint})` : '';
+    return `- ${f.key}: ${f.promptType}${hint}`;
+  }).join('\n');
+
   return `
 You are a professional medical data extraction expert. Please extract specific clinical case data from the provided medical literature texts.
 
@@ -38,57 +72,30 @@ RULES:
 11. [Format]: MUST return a valid JSON array containing the results for all documents and cases. DO NOT include any Markdown formatting (like \`\`\`json), output the raw JSON array string directly.
 
 JSON FIELDS DEFINITION:
-- pdfName: string (Use the filename I provide)
-- gender: "Male" | "Female" | null
-- age: number | null
-- height: string | null
-- weight: string | null
-- heartRate: string | null (bpm, number only)
-- systolicBP: string | null (mmHg, number only)
-- diastolicBP: string | null (mmHg, number only)
-- comorbidities: string | null (e.g., "Advanced multiple sclerosis")
-- mutantGene: string | null (Specific mutant gene names)
-- tumorLocation: string | null (e.g., "Right atrium")
-- maxDiameterMm: number | null
-- symptoms: string | null (e.g., "Palpitations, fever" or "Asymptomatic")
-- pathologyType: string | null (e.g., "Ectopic liver", "Myxoma")
-- followUpMonths: number | string | null
-- isRecurrent: "Yes" | "No" | null
-- country: string | null (First author's country)
-- tumorCount: number | null (Usually 1)
-- author: string | null (First author name)
+${fieldLines}
 `;
 }
 
 /**
  * Process a single PDF against the AI. One independent API call per file, so a
  * failure on any single file does not take down the whole batch.
+ *
+ * @param signal optional AbortSignal so the user can cancel in-flight calls.
  */
 export async function processPdf(
   item: DocumentItem,
-  config: ModelConfig
+  config: ModelConfig,
+  signal?: AbortSignal
 ): Promise<ClinicalData[]> {
   const prompt = buildExtractionPrompt();
   if (!config.baseUrl || config.baseUrl.includes('googleapis.com')) {
-    return callGemini(prompt, [item], config);
+    return callGemini(prompt, [item], config, signal);
   } else {
-    return callOpenAICompatible(prompt, [item], config);
+    return callOpenAICompatible(prompt, [item], config, signal);
   }
 }
 
-/**
- * Process a batch of PDFs. Kept for compatibility; each file is processed
- * independently and the results are flattened.
- */
-export async function processBatchOfPdfs(
-  batch: DocumentItem[],
-  config: ModelConfig
-): Promise<ClinicalData[]> {
-  const results = await Promise.all(batch.map((item) => processPdf(item, config)));
-  return results.flat();
-}
-
-async function callGemini(prompt: string, items: DocumentItem[], config: ModelConfig): Promise<ClinicalData[]> {
+async function callGemini(prompt: string, items: DocumentItem[], config: ModelConfig, signal?: AbortSignal): Promise<ClinicalData[]> {
   const { GoogleGenAI } = await import("@google/genai");
   const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
   if (!apiKey) throw new Error("Missing Gemini API Key");
@@ -112,13 +119,16 @@ async function callGemini(prompt: string, items: DocumentItem[], config: ModelCo
     }
   }
 
-  const response = await ai.models.generateContent({
-    model: config.model || "gemini-3.1-pro-preview",
-    contents: contentsParts,
-    config: {
-      responseMimeType: "application/json",
-    }
-  });
+  const response = await withAbort(
+    ai.models.generateContent({
+      model: config.model || DEFAULT_MODEL,
+      contents: contentsParts,
+      config: {
+        responseMimeType: "application/json",
+      },
+    }),
+    signal
+  );
 
   const text = response.text;
   if (!text) throw new Error("AI returned empty response");
@@ -126,7 +136,7 @@ async function callGemini(prompt: string, items: DocumentItem[], config: ModelCo
   return parseAIResponse(text);
 }
 
-async function callOpenAICompatible(prompt: string, items: DocumentItem[], config: ModelConfig): Promise<ClinicalData[]> {
+async function callOpenAICompatible(prompt: string, items: DocumentItem[], config: ModelConfig, signal?: AbortSignal): Promise<ClinicalData[]> {
   const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
   if (!apiKey) throw new Error("Missing API Key for custom endpoint");
 
@@ -154,13 +164,14 @@ async function callOpenAICompatible(prompt: string, items: DocumentItem[], confi
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`
+      'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
       model: config.model,
       messages: [{ role: 'user', content: stringContent }],
       response_format: { type: 'json_object' }
-    })
+    }),
+    signal,
   });
 
   if (!response.ok) {
@@ -182,7 +193,7 @@ export async function testConnection(config: ModelConfig): Promise<{ success: bo
       const apiKey = config.apiKey || (process.env.GEMINI_API_KEY as string);
       const ai = new GoogleGenAI({ apiKey });
       await ai.models.generateContent({
-        model: config.model || "gemini-3.1-pro-preview",
+        model: config.model || DEFAULT_MODEL,
         contents: testPrompt
       });
     } else {

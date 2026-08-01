@@ -95,6 +95,7 @@ export default function UploadPanel({
                     {files.map((f) => (
                         <div
                             key={f.id}
+                            title={f.error}
                             className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 group text-sm"
                         >
                             <div
@@ -124,6 +125,11 @@ export default function UploadPanel({
                             </div>
                             <span className="truncate flex-1 font-medium text-slate-600">
                                 {f.file.name}
+                                {f.error && (
+                                    <span className="block text-xs text-red-500 font-normal truncate max-w-[220px]">
+                                        {f.error}
+                                    </span>
+                                )}
                             </span>
                             {f.status === 'pending' && !isProcessing && (
                                 <button
